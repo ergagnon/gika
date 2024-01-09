@@ -21,6 +21,7 @@ dependencies {
     implementation("com.google.protobuf:protobuf-kotlin:3.25.1")
     implementation("io.grpc:grpc-protobuf:1.59.1")
     implementation("io.grpc:grpc-protobuf-lite:1.59.1")
+    implementation("io.grpc:grpc-services:1.59.1")
     implementation("io.grpc:grpc-stub:1.59.1")
     implementation("io.grpc:grpc-netty:1.59.1")
     implementation("io.grpc:grpc-kotlin-stub:1.4.1")

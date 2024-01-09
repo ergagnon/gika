@@ -1,4 +1,9 @@
 
+import com.gika.helloworld.GreeterGrpcKt
+import com.gika.helloworld.HelloRequest
+import com.gika.helloworld.helloReply
+import io.grpc.Server
+import io.grpc.ServerBuilder
 import kotlinx.coroutines.*
 import org.apache.tika.io.TikaInputStream
 import org.apache.tika.parser.AutoDetectParser
@@ -7,9 +12,15 @@ import org.apache.tika.sax.BodyContentHandler
 import org.apache.tika.sax.WriteOutContentHandler
 import java.io.*
 import java.nio.CharBuffer
+import io.grpc.protobuf.services.ProtoReflectionService;
 
 fun main(): Unit = runBlocking {
     //val filePath = "C:\\Users\\egagn\\OneDrive\\Documents\\Offre Éric Gagnon 2015.docx" // Change this to the path of your file
+    val port = System.getenv("PORT")?.toInt() ?: 50051
+    val server = HelloWorldServer(port)
+    server.start()
+    server.blockUntilShutdown()
+
 
     val pipedOutputStream = PipedOutputStream()
     val pipedInputStream = PipedInputStream(pipedOutputStream)
@@ -104,6 +115,41 @@ suspend fun parse(pi: PipedInputStream) = coroutineScope {
     }
 }
 
+class HelloWorldServer(private val port: Int) {
+    val server: Server =
+        ServerBuilder
+            .forPort(port)
+            .addService(HelloWorldService())
+            .addService(ProtoReflectionService.newInstance())
+            .build()
+
+    fun start() {
+        server.start()
+        println("Server started, listening on $port")
+        Runtime.getRuntime().addShutdownHook(
+            Thread {
+                println("*** shutting down gRPC server since JVM is shutting down")
+                this@HelloWorldServer.stop()
+                println("*** server shut down")
+            },
+        )
+    }
+
+    private fun stop() {
+        server.shutdown()
+    }
+
+    fun blockUntilShutdown() {
+        server.awaitTermination()
+    }
+
+    internal class HelloWorldService : GreeterGrpcKt.GreeterCoroutineImplBase() {
+        override suspend fun sayHello(request: HelloRequest) =
+            helloReply {
+                message = "Hello ${request.name}"
+            }
+    }
+}
 
 /*fun main() {
     val inputStream = FileInputStream("C:\\Users\\egagn\\OneDrive\\Documents\\Offre Éric Gagnon 2015.docx")
