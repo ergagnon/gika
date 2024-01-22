@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+option java_multiple_files = true;
+option java_package = "com.gika.rawtext";
+option java_outer_classname = "RawTextProto";
+option objc_class_prefix = "RT";
+
+package gika;
+
+service RawText {
+    rpc Extract (stream FileRequest) returns (stream RawTextReply) {}
+}
+
+message FileRequest {
+    bytes content = 1;
+}
+
+message RawTextReply {
+    string type = 2;
+    bytes content = 1;
+}

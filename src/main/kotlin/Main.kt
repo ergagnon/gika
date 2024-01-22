@@ -2,9 +2,16 @@
 import com.gika.helloworld.GreeterGrpcKt
 import com.gika.helloworld.HelloRequest
 import com.gika.helloworld.helloReply
+import com.gika.rawtext.FileRequest
+import com.gika.rawtext.RawTextGrpcKt
+import com.gika.rawtext.RawTextReply
+import com.gika.rawtext.rawTextReply
 import io.grpc.Server
 import io.grpc.ServerBuilder
+import io.grpc.protobuf.services.ProtoReflectionService
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
 import org.apache.tika.io.TikaInputStream
 import org.apache.tika.parser.AutoDetectParser
 import org.apache.tika.parser.ParseContext
@@ -12,7 +19,6 @@ import org.apache.tika.sax.BodyContentHandler
 import org.apache.tika.sax.WriteOutContentHandler
 import java.io.*
 import java.nio.CharBuffer
-import io.grpc.protobuf.services.ProtoReflectionService;
 
 fun main(): Unit = runBlocking {
     //val filePath = "C:\\Users\\egagn\\OneDrive\\Documents\\Offre Éric Gagnon 2015.docx" // Change this to the path of your file
@@ -120,6 +126,7 @@ class HelloWorldServer(private val port: Int) {
         ServerBuilder
             .forPort(port)
             .addService(HelloWorldService())
+            .addService(RawTextService())
             .addService(ProtoReflectionService.newInstance())
             .build()
 
@@ -147,6 +154,18 @@ class HelloWorldServer(private val port: Int) {
         override suspend fun sayHello(request: HelloRequest) =
             helloReply {
                 message = "Hello ${request.name}"
+            }
+    }
+
+    internal class RawTextService : RawTextGrpcKt.RawTextCoroutineImplBase() {
+        override fun extract(requests: Flow<FileRequest>): Flow<RawTextReply> =
+            flow {
+                requests.collect { data ->
+                    emit(rawTextReply {
+                        content = data.content
+                        type = "csv"
+                    })
+                }
             }
     }
 }
