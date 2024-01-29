@@ -13,7 +13,6 @@ import io.grpc.protobuf.services.ProtoReflectionService
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.flowOn
 import org.apache.tika.io.TikaInputStream
 import org.apache.tika.parser.AutoDetectParser
 import org.apache.tika.parser.ParseContext
@@ -32,7 +31,6 @@ fun main(): Unit = runBlocking {
     server.blockUntilShutdown()
 }
 
-
 @OptIn(ExperimentalCoroutinesApi::class, DelicateCoroutinesApi::class)
 suspend fun parse(pi: PipedInputStream, pw: PipedWriter) = coroutineScope {
     val parser = AutoDetectParser()
@@ -45,6 +43,7 @@ suspend fun parse(pi: PipedInputStream, pw: PipedWriter) = coroutineScope {
         parser.parse(TikaInputStream.get(pi), BodyContentHandler(handler), metadata, context)
         println("End parse")
         pi.close()
+        pw.close()
     }
 }
 
@@ -86,6 +85,7 @@ class HelloWorldServer(private val port: Int) {
 
     internal class RawTextService : RawTextGrpcKt.RawTextCoroutineImplBase() {
         override fun extract(requests: Flow<FileRequest>): Flow<RawTextReply> =
+
             flow {
                 coroutineScope {
                     val pipedOutputStream = PipedOutputStream()
@@ -94,33 +94,7 @@ class HelloWorldServer(private val port: Int) {
                     val pipedInputStream = PipedInputStream(pipedOutputStream)
                     val pipedReader = PipedReader(pipedWriter)
 
-                    val parse = async { parse(pipedInputStream, pipedWriter) }
-
-                    val read = async {
-                        println("Start read")
-                        val charBuffer = CharBuffer.allocate(1024)
-
-                        while (pipedReader.read(charBuffer) != -1) {
-                            println("Enter read loop")
-                            charBuffer.flip()
-                            val charArray = CharArray(charBuffer.remaining())
-                            charBuffer.get(charArray)
-                            val result = String(charArray)
-                            println(result)
-
-                            emit(
-                                rawTextReply {
-                                    content = result.toByteStringUtf8()
-                                }
-                            )
-
-                            charBuffer.clear()
-                        }
-                        println("End read")
-                        pipedWriter.close()
-                        pipedReader.close()
-
-                    }
+                    val parse = launch { parse(pipedInputStream, pipedWriter) }
 
                     launch {
                         requests.collect { data ->
@@ -131,9 +105,29 @@ class HelloWorldServer(private val port: Int) {
                         pipedOutputStream.close()
                     }
 
-                    read.join()
+                    println("Start read")
+                    val charBuffer = CharBuffer.allocate(1024)
+
+                    while (pipedReader.read(charBuffer) != -1) {
+                        println("Enter read loop")
+                        charBuffer.flip()
+                        val charArray = CharArray(charBuffer.remaining())
+                        charBuffer.get(charArray)
+                        val result = String(charArray)
+                        println(result)
+
+                        emit(
+                            rawTextReply {
+                                content = result.toByteStringUtf8()
+                            }
+                        )
+
+                        charBuffer.clear()
+                    }
+                    println("End read")
+                    pipedReader.close()
                 }
-            }.flowOn(Dispatchers.Default)
+            }
     }
 }
 
