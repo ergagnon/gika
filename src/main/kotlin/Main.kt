@@ -6,118 +6,45 @@ import com.gika.rawtext.FileRequest
 import com.gika.rawtext.RawTextGrpcKt
 import com.gika.rawtext.RawTextReply
 import com.gika.rawtext.rawTextReply
+import com.google.protobuf.kotlin.toByteStringUtf8
 import io.grpc.Server
 import io.grpc.ServerBuilder
 import io.grpc.protobuf.services.ProtoReflectionService
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
 import org.apache.tika.io.TikaInputStream
 import org.apache.tika.parser.AutoDetectParser
 import org.apache.tika.parser.ParseContext
 import org.apache.tika.sax.BodyContentHandler
 import org.apache.tika.sax.WriteOutContentHandler
-import java.io.*
+import java.io.PipedInputStream
+import java.io.PipedOutputStream
+import java.io.PipedReader
+import java.io.PipedWriter
 import java.nio.CharBuffer
 
 fun main(): Unit = runBlocking {
-    //val filePath = "C:\\Users\\egagn\\OneDrive\\Documents\\Offre Éric Gagnon 2015.docx" // Change this to the path of your file
     val port = System.getenv("PORT")?.toInt() ?: 50051
     val server = HelloWorldServer(port)
     server.start()
     server.blockUntilShutdown()
-
-
-    val pipedOutputStream = PipedOutputStream()
-    val pipedInputStream = PipedInputStream(pipedOutputStream)
-
-    launch { read(pipedOutputStream) }
-    launch { parse(pipedInputStream) }
-
-
-    /*try {
-        FileInputStream(filePath).use { fileStream ->
-            val parser = AutoDetectParser()
-            val handler = BodyContentHandler()
-            val metadata = org.apache.tika.metadata.Metadata()
-
-            parser.parse(fileStream, handler, metadata)
-
-            println("Content:\n${handler}")
-            println("Metadata:")
-            metadata.names().forEach { name ->
-                println("$name: ${metadata.get(name)}")
-            }
-        }
-    } catch (e: Exception) {
-        e.printStackTrace()
-    }*/
 }
-suspend fun read(po: PipedOutputStream) = coroutineScope {
-    val filePath = "C:\\Users\\egagn\\OneDrive\\Documents\\Offre Éric Gagnon 2015.docx" // Change this to the path of your file
-    val chunkSize = 1024
 
-    launch {
-        try {
-            FileInputStream(filePath).buffered().use { reader ->
-                var bytesRead: Int
-                val buffer = ByteArray(chunkSize)
-
-                do {
-                    bytesRead = reader.read(buffer, 0, chunkSize)
-
-                    if (bytesRead > 0) {
-                        val end = bytesRead - 1
-                        val read = buffer.slice(0.rangeTo(end))
-                        val ba = read.toByteArray()
-                        po.write(ba)
-                    }
-
-                } while (bytesRead != -1)
-
-                reader.close()
-                po.close()
-
-            }
-        } catch (e: Exception) {
-            println("Error reading file: ${e.message}")
-        }
-    }
-}
 
 @OptIn(ExperimentalCoroutinesApi::class, DelicateCoroutinesApi::class)
-suspend fun parse(pi: PipedInputStream) = coroutineScope {
-
+suspend fun parse(pi: PipedInputStream, pw: PipedWriter) = coroutineScope {
     val parser = AutoDetectParser()
     val metadata = org.apache.tika.metadata.Metadata()
     val context = ParseContext()
-    val pipedWriter = PipedWriter()
-    val pipedReader = PipedReader(pipedWriter)
-    val handler = WriteOutContentHandler(pipedWriter)
+    val handler = WriteOutContentHandler(pw)
 
     launch(newSingleThreadContext("Parse")) {
         println("Start parse")
         parser.parse(TikaInputStream.get(pi), BodyContentHandler(handler), metadata, context)
         println("End parse")
         pi.close()
-        pipedWriter.close()
-    }
-
-    launch {
-        println("Start read")
-        val charBuffer = CharBuffer.allocate(1024)
-
-        while (pipedReader.read(charBuffer) != -1) {
-            println("Enter read loop")
-            charBuffer.flip()
-            val charArray = CharArray(charBuffer.remaining())
-            charBuffer.get(charArray)
-            val result = String(charArray)
-            println(result)
-            charBuffer.clear()
-        }
-        println("End read")
-        pipedReader.close()
     }
 }
 
@@ -160,13 +87,53 @@ class HelloWorldServer(private val port: Int) {
     internal class RawTextService : RawTextGrpcKt.RawTextCoroutineImplBase() {
         override fun extract(requests: Flow<FileRequest>): Flow<RawTextReply> =
             flow {
-                requests.collect { data ->
-                    emit(rawTextReply {
-                        content = data.content
-                        type = "csv"
-                    })
+                coroutineScope {
+                    val pipedOutputStream = PipedOutputStream()
+                    val pipedWriter = PipedWriter()
+
+                    val pipedInputStream = PipedInputStream(pipedOutputStream)
+                    val pipedReader = PipedReader(pipedWriter)
+
+                    val parse = async { parse(pipedInputStream, pipedWriter) }
+
+                    val read = async {
+                        println("Start read")
+                        val charBuffer = CharBuffer.allocate(1024)
+
+                        while (pipedReader.read(charBuffer) != -1) {
+                            println("Enter read loop")
+                            charBuffer.flip()
+                            val charArray = CharArray(charBuffer.remaining())
+                            charBuffer.get(charArray)
+                            val result = String(charArray)
+                            println(result)
+
+                            emit(
+                                rawTextReply {
+                                    content = result.toByteStringUtf8()
+                                }
+                            )
+
+                            charBuffer.clear()
+                        }
+                        println("End read")
+                        pipedWriter.close()
+                        pipedReader.close()
+
+                    }
+
+                    launch {
+                        requests.collect { data ->
+                            withContext(Dispatchers.IO) {
+                                pipedOutputStream.write(data.content.toByteArray())
+                            }
+                        }
+                        pipedOutputStream.close()
+                    }
+
+                    read.join()
                 }
-            }
+            }.flowOn(Dispatchers.Default)
     }
 }
 
